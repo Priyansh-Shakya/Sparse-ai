@@ -85,6 +85,7 @@ class Graph:
         self.edges: list[Edge] = []
         self._entry_point: Optional[str] = None
         self._compiled = False
+        self.logger = None
 
     # ============================================================
     # REGISTRATION
@@ -348,8 +349,9 @@ class Graph:
     # using the client/tools that only exist once an Agent is built.
     # ---------------------------------------------------------------
 
-    def compile(self, client, tools=None):
+    def compile(self, client, tools=None, logger=None):
         tools = tools or []
+        self.logger = logger
         for name, func in list(self.nodes.items()):
             if func == Node._LLM_CALL:
                 self.nodes[name] = self._build_llm_node(client, tools)
@@ -363,19 +365,62 @@ class Graph:
     # ============================================================
     # LLM NODE
     # ============================================================
-
     def _build_llm_node(self, client, tools):
 
+        import inspect
         async def llm_call(state: State) -> State:
 
-            response = await client.adapter.generate(
-                messages=Message.serialize(
-                    state.messages
-                ),
-                tools=tools,
-            )
+            # Support streaming when enabled.
+            #
+            # If streaming is enabled and a token callback is available,
+            # stream the response token-by-token and notify the callback.
+            #
+            # IMPORTANT:
+            # We still wait for the final response so that tool calls,
+            # raw response data, and the complete response remain available
+            # to the rest of the graph.
+            if  state.stream is not None:
+
+                final = None
+
+                async for chunk in client.adapter.stream(
+                    messages=Message.serialize(
+                        state.messages
+                    ),
+                    tools=tools,
+                ):
+
+                    if chunk.delta_text:
+
+                        result = state.stream(
+                            chunk.delta_text
+                        )
+
+                        if inspect.isawaitable(result):
+                            await result
+
+                    if chunk.done:
+                        final = chunk.final_response
+
+                response = final
+
+            else:
+
+                response = await client.adapter.generate(
+                    messages=Message.serialize(
+                        state.messages
+                    ),
+                    tools=tools,
+                )
 
             state.last_response = response
+
+            # Track statistics
+            if hasattr(state, 'query_stats'):
+                state.query_stats['llm_calls'] += 1
+                # Try to get token count from response if available
+                if hasattr(response, 'raw') and hasattr(response.raw, 'usage'):
+                    state.query_stats['total_tokens'] += response.raw.usage.total_tokens
 
             # Store tool calls in state.
             #
@@ -389,26 +434,20 @@ class Graph:
 
             # Preserve message handling.
             if response.tool_calls:
-
+                if self.logger:
+                    self.logger.log_custom(f"[LLM NODE] Tool calls detected: {len(response.tool_calls)} calls")
                 state.messages.append(
                     Message.from_dict(
                         client.adapter.format_assistant_turn(
-                            response.raw
+                            response #* LLMResponse obj
                         )
-                    )
-                )
-
-            else:
-
-                state.messages.append(
-                    Message.assistant(
-                        response.text
                     )
                 )
 
             return state
 
         return llm_call
+
 
     # ============================================================
     # TOOL NODE
@@ -444,6 +483,8 @@ class Graph:
                         f"Error: no tool '{call.name}'",
                         is_error=True,
                     )
+                    if self.logger:
+                        self.logger.log_tool_result(call.name, f"Error: no tool '{call.name}'", is_error=True)
 
                 # ------------------------------------------------
                 # Execute tool
@@ -451,13 +492,22 @@ class Graph:
 
                 else:
 
+                    if self.logger:
+                        self.logger.log_tool_call(call.name, call.arguments)
                     try:
                         output = await tool.execute(**call.arguments)
                         result = ToolResult(call.id, call.name, output, is_error=False)
+                        if self.logger:
+                            self.logger.log_tool_result(call.name, output, is_error=False)
+                        # Track statistics
+                        if hasattr(state, 'query_stats'):
+                            state.query_stats['tools_executed'] += 1
                         if getattr(tool, "_last_approval_note", None):
                             state.llm_approval_requests[call.id] = tool._last_approval_note
                     except Exception as e:
                         result = ToolResult(call.id, call.name, f"Error: {e}", is_error=True)
+                        if self.logger:
+                            self.logger.log_tool_result(call.name, f"Error: {e}", is_error=True)
 
                 # Add provider-formatted tool result
                 # to conversation history.
@@ -511,7 +561,10 @@ class Graph:
         matching = [e for e in self.edges if e.start == current]
         if not matching:
             raise ValueError(f"No outgoing edge from node '{current}'.")
-        return await matching[0].resolve(state, self)
+        next_node = await matching[0].resolve(state, self)
+        if self.logger:
+            self.logger.log_graph_routing(current, next_node)
+        return next_node
 
     
 
@@ -519,7 +572,7 @@ class Graph:
     # EXECUTION
     # ============================================================
 
-    async def run(self, state):
+    async def run(self, state, query_stats=None):
             """
             Drives the graph: starts at the entry point (or wherever a previous
             run paused, if resuming), runs each node in turn, and stops when it
@@ -527,30 +580,34 @@ class Graph:
             """
             if not self._compiled:
                 raise RuntimeError("Graph not compiled — pass client/tools via Agent(), or call graph.compile() directly.")
-    
+
             from sparse_ai.graph.graph.graph_interrupt import GraphInterrupt
             from sparse_ai.core.enums import StateEvent
             import inspect
-            
+
             # Resume from a previous pause if one exists, otherwise start fresh.
             current = state.current_node_name or self._entry_point
-            
+
             while current != END:
                 try:
+                    if self.logger:
+                        self.logger.log_node_execution(current)
                     state.current_node_name = current
                     result = self.nodes[current](state)
                     if inspect.isawaitable(result):
                         result = await result
                     state = result
                     state.executed_nodes.append(current)
+                    if query_stats:
+                        query_stats['nodes_executed'] = len(state.executed_nodes)
                     current = await self._resolve_next(current, state)
-    
+
                 except GraphInterrupt as interrupt:
                     state.status = StateEvent.WAITING
                     state.interrupt = interrupt
                     state.current_node_name = current         # exact resume point
                     return state                                # stop here — hand control back to the caller
-    
+
             state.status = StateEvent.DONE
             return state
 

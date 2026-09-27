@@ -123,8 +123,8 @@ Approval / interruption:
 """
  
 
-    def __init__(self, messages=None, custom_fields: dict | None = None):
-        self.messages = messages or [] 
+    def __init__(self, messages=None , custom_fields: dict | None = None):
+        self.messages = messages or []
         self.last_response = None
         self.tool_calls = None
         self.tool_results = []
@@ -135,19 +135,25 @@ Approval / interruption:
         self.run_id = None
         self.executed_nodes = []
 
+        #* sream
+        self.stream = None   # Handled single token when streaming.
+
         #* Retries
         self.node_retries = {}
         self.agent_retries = None #* Fields by agent
 
         #* Approval fields
         self.interrupt: "GraphInterrupt | None" = None
-        self.approval_response = None 
-        self.approval_result = None 
+        self.approval_response = None
+        self.approval_result = None
         self.approval_notes = None  # Reason of Approval/Rejection or extra Request with it.
         self.llm_approval_requests: dict[str, str] = {}   # {"tool_call_id" : "approval explanation text"}
 
         #* Custom fields by Users...
-        self.custom_fields = custom_fields or {}
+        self.custom_fields = custom_fields or {} #! RECOMMENDED using 'PYDANTIC' typed 'DICT'
+
+        #* Logger
+        self.logger = None
 
 
  
@@ -158,7 +164,10 @@ Approval / interruption:
         return getattr(self, key)
  
     def __setitem__(self, key, value):
+        old_value = getattr(self, key, None)
         setattr(self, key, value)
+        if self.logger and old_value != value:
+            self.logger.log_custom(f"[STATE] {key} changed: {old_value} -> {value}")
  
     def __repr__(self):
         return (

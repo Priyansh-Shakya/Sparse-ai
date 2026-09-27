@@ -32,6 +32,8 @@ async def approval_node(state: State, client, config: ApprovalConfig) -> State:
         state.approval_result = verdict["outcome"]
         state.approval_notes = verdict["notes"]
         state.approval_response = None
+        if state.logger:
+            state.logger.log_approval_decision(verdict["outcome"], verdict["notes"])
         return state
 
     verdict_text = "Does this look correct, or would you like changes?"   # default, always set first
@@ -48,6 +50,8 @@ async def approval_node(state: State, client, config: ApprovalConfig) -> State:
         #     phrasing = await client.adapter.generate(...)
         #     verdict_text = phrasing.text or verdict_text
 
+    if state.logger:
+        state.logger.log_approval_request(config.reason, verdict_text)
     raise GraphInterrupt(
         reason=config.reason,
         data=state.last_response,

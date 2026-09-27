@@ -8,12 +8,7 @@ from sparse_ai.state.state import State
 from sparse_ai.graph.graph.graph import Graph
 from sparse_ai.messages.messages import Message
 from sparse_ai.graph.graph.default import default_agent_graph
-
-
-# at the top of each file — adapters.py, agent.py, tools.py, etc.
-import logging
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+from sparse_ai.core.logging import SparseLogger
 
 
 class Agent:
@@ -48,6 +43,14 @@ class Agent:
         auto_handle_interrupts (bool):
             Whether pending graph interrupts should be handled automatically
             through `check_interrupt()`.
+        logging (bool):
+            Whether to enable detailed logging throughout agent execution.
+            When True, logs agent queries, node executions, LLM responses,
+            tool calls, and other events. When False, only final output is shown.
+        logging (bool):
+            Whether to enable detailed logging throughout agent execution.
+        logger (SparseLogger):
+            Logger instance used throughout the framework.
 
     Methods:
         run(query):
@@ -63,23 +66,50 @@ class Agent:
         ...     client=client,
         ...     messages=[],
         ...     tools=[search_tool],
+        ...     logging=True,
         ... )
         >>>
         >>> response = await agent.run("What is the weather today?")
     """
-    def __init__(self, client, messages: list, tools=None, graph: "Graph | None" = None,
-                 state: "State | None" = None,auto_handle_interrupts:bool = False, retries: int = 3):
+    def __init__(self, client, messages: list,
+                  tools=None, 
+                  graph: "Graph | None" = None,
+                 stream = False,
+                 state: "State | None" = None, 
+                 auto_handle_interrupts:bool = False,
+                   retries: int = 3,
+                   logging: bool = False):
+        self.logging = logging
+        self.logger = SparseLogger(enabled=logging)
         self.client = client
         self.messages = messages
         self.tools = tools or []
         self._provider = self.client.provider
-        self.graph = (graph or default_agent_graph()).compile(client=self.client, tools=self.tools)
         self.retries = retries
         self.state = state or State()          # fresh instance every time, not a shared default
         self.state.agent_retries = self.retries
         self.auto_handle_interrupts = auto_handle_interrupts
+        # Query-level statistics
+        self.query_stats = {
+            'llm_calls': 0,
+            'tools_executed': 0,
+            'nodes_executed': 0,
+            'total_tokens': 0
+        }
+        # Pass logger to state
+        self.state.logger = self.logger
+        # Pass logger to client and adapter
+        self.client.logger = self.logger
+        if hasattr(self.client, 'adapter'):
+            self.client.adapter.logger = self.logger
+        # Set stream on client
+        if hasattr(self.client, 'stream_enabled'):
+            self.client.stream_enabled = stream
+        # Compile graph with logger
+        self.graph = (graph or default_agent_graph()).compile(client=self.client, tools=self.tools, logger=self.logger)
 
-    async def run(self, query: str):
+
+    async def run(self, query: str, stream=None):
         """
         Run the agent with a new user query.
 
@@ -94,6 +124,9 @@ class Agent:
         Args:
             query (str):
                 New user message to send to the agent.
+            stream (bool, optional):
+                Whether to stream the response. Overrides the agent's default
+                stream setting for this call only.
 
         Returns:
             str | GraphInterrupt:
@@ -105,13 +138,25 @@ class Agent:
             >>> response = await agent.run("What files are available?")
             >>> print(response)
         """
-        print("=================================AGENT RUNNING=======================================")
+        # Reset query-level statistics
+        self.query_stats = {
+            'llm_calls': 0,
+            'tools_executed': 0,
+            'nodes_executed': 0,
+            'total_tokens': 0
+        }
+
+        self.logger.log_agent_start(query)
+        if self.tools:
+            self.logger.log_tools_available(self.tools)
         self.messages.append(Message.user(query))
         self.state.messages = self.messages     # sync — self.messages stays the one source of truth
-        print("================================= STATE =================================================\n",self.state.__repr__())
-        final_state = await self.graph.run(self.state)
-        self.state = final_state                    # ← must happen 
+        self.state.query_stats = self.query_stats  # Pass stats to state
+        self.logger.log_state(self.state)
+        final_state = await self.graph.run(self.state, self.query_stats)
+        self.state = final_state                    # ← must happen
         self.messages = final_state.messages   # sync back, in case a node appended tool/assistant turns
+        self.state.stream = stream   # None if caller doesn't want streaming for this call
 
         #* CHECKING INTERRUPT
         if final_state.interrupt is not None:
@@ -119,6 +164,11 @@ class Agent:
             if self.auto_handle_interrupts: #? WHEN AGENT(auto_handle_interrupts=True)
                 return await self.check_interrupt(response=response)
             return response   # caller wants to handle it themselves — e.g. a real UI, not input()
+
+        # Log query summary
+        self.query_stats['final_response'] = final_state.last_response.text if final_state.last_response else 'No response'
+        self.query_stats['state'] = final_state
+        self.logger.log_query_summary(query, self.query_stats, show_state=False)
 
         return final_state.last_response.text
 
@@ -143,8 +193,8 @@ class Agent:
         from sparse_ai.graph.graph.graph_interrupt import GraphInterrupt
 
         while isinstance(response, GraphInterrupt):
+            self.logger.log_interrupt(response.reason, response.data)
             print(f"Reason: {response.reason}")
-            print(f"Data: {response.data}")
             print(f"Question: {response.verdict}")
 
             choice = input("approve or reject? ")

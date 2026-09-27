@@ -307,10 +307,8 @@ class Tool():
 
         if inspect.iscoroutinefunction(self.func):
             exe =  await self.func(**kwargs)
-            print("===================================================================================================\nTool Executed:", exe)
             return exe
         exe= self.func(**kwargs)
-        print("===================================================================================================\nTool Executed:", exe)
         return exe
 
     @staticmethod
