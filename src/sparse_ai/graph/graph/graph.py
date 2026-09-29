@@ -45,40 +45,84 @@ class Graph:
 
     A graph should not be modified after it has been compiled.
 
-    Attributes:
-        nodes (dict[str, Callable]):
-            Registered node names mapped to their callable implementations.
-        edges (list[Edge]):
-            Edges defining the graph's execution flow.
-        _entry_point (Optional[str]):
-            Node at which graph execution begins.
-        _compiled (bool):
-            Whether the graph has been compiled and is ready for execution.
+        
+    One call to fully define a graph's shape. This is the primary way
+    users are expected to build a graph.
 
-    Methods:
-        graph_builder(...):
-            Define and validate the graph's nodes, edges, routers, and entry
-            point.
-        run(...):
-            Execute the graph starting from its configured entry point.
-        display_graph(...):
-            Render the graph as a visual diagram.
-        to_dict():
-            Return a serializable representation of the graph structure.
+    Args:
+        nodes (dict[str, Callable]):
+            Mapping of node names to node functions.
+                {
+                    "chat": Node.llm_call(),        # framework-resolved at compile()
+                    "tool": Node.tool_exec(),       # framework-resolved at compile()
+                    "validate": my_validate_fn,     # a plain user-defined function
+                    "approval": Node.approval_node( # auto-generates its own router
+                        on_approved="tool",
+                        on_rejected="chat",
+                    ),
+                }
+
+        edges (list[tuple[str, str]], optional):
+            Static, single-destination connections — use these ONLY when a node
+            has exactly one possible next node. A node cannot appear as the
+            start of both an `edges` entry and a `routers` entry — pick one.
+                [
+                    (START, "chat"),      # (START, x) sets x as the entry point — not a real edge
+                    ("validate", "tool"),
+                ]
+
+        routers (list[tuple], optional):
+            One entry per node that has MORE than one possible next node.
+            Each entry is (start, router_fn) or (start, router_fn, display_paths):
+
+                start (str):
+                    The branching node's name.
+
+                router_fn (Callable[[State], str]):
+                    Sync or async. Receives the current `state` and MUST return
+                    the REAL NAME of the next node (or END) — not a label that
+                    gets translated, the actual node name itself.
+
+                display_paths (dict[str, str], optional — 3rd tuple item):
+                    Display-only hint for `display_graph()`, listing the
+                    branches this router can take, e.g. {"has_tool": "tool",
+                    "done": END}. Never affects execution or validation —
+                    purely cosmetic, so the diagram can draw real labeled
+                    arrows out of this node instead of leaving it unlabeled.
+
+        entry_point (str, optional):
+            Explicit node to use as the graph's entry point. Required —
+            either this or a (START, x) edge must be given, or graph_builder
+            raises ValueError.
+
+    Returns:
+        Graph: The configured and validated graph instance.
 
     Example:
+        >>> async def route_after_chat(state) -> str:
+        ...     if state.tool_calls:
+        ...         return "tool"
+        ...     return END
+        ...
         >>> graph = Graph().graph_builder(
         ...     nodes={
         ...         "chat": Node.llm_call(),
         ...         "tool": Node.tool_exec(),
         ...     },
         ...     edges=[
-        ...         (START, "chat"),
-        ...         ("chat", "tool"),
+        ...         ("tool", "chat"),   # tool always goes back to chat — single destination
         ...     ],
+        ...     routers=[
+        ...         # chat has TWO possible destinations, so it needs a router,
+        ...         # not a plain edge. display_paths is optional but makes
+        ...         # display_graph() draw labeled arrows instead of a bare diamond.
+        ...         ("chat", route_after_chat, {"has_tool": "tool", "done": END}),
+        ...     ],
+        ...     entry_point="chat",
         ... )
         >>>
         >>> graph.display_graph()
+
     """
     def __init__(self):
         self.nodes: dict[str, Callable] = {}
@@ -382,7 +426,7 @@ class Graph:
             if  state.stream is not None:
 
                 final = None
-
+                
                 async for chunk in client.adapter.stream(
                     messages=Message.serialize(
                         state.messages

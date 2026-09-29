@@ -74,7 +74,7 @@ class Agent:
     def __init__(self, client, messages: list,
                   tools=None, 
                   graph: "Graph | None" = None,
-                 stream = False,
+                 
                  state: "State | None" = None, 
                  auto_handle_interrupts:bool = False,
                    retries: int = 3,
@@ -102,9 +102,7 @@ class Agent:
         self.client.logger = self.logger
         if hasattr(self.client, 'adapter'):
             self.client.adapter.logger = self.logger
-        # Set stream on client
-        if hasattr(self.client, 'stream_enabled'):
-            self.client.stream_enabled = stream
+        
         # Compile graph with logger
         self.graph = (graph or default_agent_graph()).compile(client=self.client, tools=self.tools, logger=self.logger)
 

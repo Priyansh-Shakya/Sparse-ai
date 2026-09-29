@@ -32,7 +32,6 @@ class Client:
         self.temp = temperature
         self.retries = retries
         self.logger = None
-        self.stream_enabled = False
         self.adapter = self.create_client()   #! CREATES CLIENT ON INITIATION OF CLIENT CLASS (e.g. client = Client(...)) 
 
 
