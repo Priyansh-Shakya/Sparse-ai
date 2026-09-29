@@ -135,8 +135,11 @@ Approval / interruption:
         self.run_id = None
         self.executed_nodes = []
 
-        #* sream
+        #* stream
         self.stream = None   # Handled single token when streaming.
+
+        #* Tool Status Updater
+        self.current_tool = None       # For letting Client know Agent state and show UI accordingly.
 
         #* Retries
         self.node_retries = {}
@@ -151,6 +154,9 @@ Approval / interruption:
 
         #* Custom fields by Users...
         self.custom_fields = custom_fields or {} #! RECOMMENDED using 'PYDANTIC' typed 'DICT'
+
+        #* Custom  
+        self.show_state = None  # Takes a callable.
 
         #* Logger
         self.logger = None

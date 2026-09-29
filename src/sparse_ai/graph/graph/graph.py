@@ -478,6 +478,14 @@ class Graph:
 
             # Preserve message handling.
             if response.tool_calls:
+
+                if state.show_state is not None:
+                    result = state.show_state(f"[STATUS]:{response.tool_calls}")
+                    
+                    if inspect.isawaitable(result): ### show_state callable will send this f-string to client.
+                        await result
+                    
+
                 if self.logger:
                     self.logger.log_custom(f"[LLM NODE] Tool calls detected: {len(response.tool_calls)} calls")
                 state.messages.append(
@@ -514,6 +522,13 @@ class Graph:
                 tool = tool_map.get(
                     call.name
                 )
+
+                # ------------------------------------------------
+                # Add currentl executing tool's metadata to state
+                # ------------------------------------------------
+
+                state.current_tool = tool #* Currently executiong tool OBJ is stored.
+
 
                 # ------------------------------------------------
                 # Tool not found

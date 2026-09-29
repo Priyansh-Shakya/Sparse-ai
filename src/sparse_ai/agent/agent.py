@@ -107,7 +107,8 @@ class Agent:
         self.graph = (graph or default_agent_graph()).compile(client=self.client, tools=self.tools, logger=self.logger)
 
 
-    async def run(self, query: str, stream=None):
+    async def run(self, query: str, stream=None, show_state= None ): 
+        # show_state takes a Callable which returns State/Tool Call obj str concatinated with a Custom in-built CODE to pattern match in clinte and show custom UI.
         """
         Run the agent with a new user query.
 
@@ -147,15 +148,25 @@ class Agent:
         self.logger.log_agent_start(query)
         if self.tools:
             self.logger.log_tools_available(self.tools)
+
         self.messages.append(Message.user(query))
+
         self.state.messages = self.messages     # sync — self.messages stays the one source of truth
+
         self.state.query_stats = self.query_stats  # Pass stats to state
+
         self.state.stream = stream      #* Added before GRAPH RUN()          # None if caller doesn't want streaming for this call
+
+        self.state.show_state = show_state #* This token str will be concatinated to ToolCall or other state which CLient can map and show custom UI.
+
         self.logger.log_state(self.state)
+
         final_state = await self.graph.run(self.state, self.query_stats)
+
         self.state = final_state                    # ← must happen
+
         self.messages = final_state.messages       # sync back, in case a node appended tool/assistant turns
-        return final_state.last_response.text
+        
 
 
         #* CHECKING INTERRUPT
