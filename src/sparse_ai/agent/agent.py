@@ -150,11 +150,13 @@ class Agent:
         self.messages.append(Message.user(query))
         self.state.messages = self.messages     # sync — self.messages stays the one source of truth
         self.state.query_stats = self.query_stats  # Pass stats to state
+        self.state.stream = stream      #* Added before GRAPH RUN()          # None if caller doesn't want streaming for this call
         self.logger.log_state(self.state)
         final_state = await self.graph.run(self.state, self.query_stats)
         self.state = final_state                    # ← must happen
-        self.messages = final_state.messages   # sync back, in case a node appended tool/assistant turns
-        self.state.stream = stream   # None if caller doesn't want streaming for this call
+        self.messages = final_state.messages       # sync back, in case a node appended tool/assistant turns
+        return final_state.last_response.text
+
 
         #* CHECKING INTERRUPT
         if final_state.interrupt is not None:
