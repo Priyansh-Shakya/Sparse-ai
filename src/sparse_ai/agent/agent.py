@@ -8,7 +8,7 @@ from sparse_ai.state.state import State
 from sparse_ai.graph.graph.graph import Graph
 from sparse_ai.messages.messages import Message
 from sparse_ai.graph.graph.default import default_agent_graph
-from sparse_ai.core.logging import SparseLogger
+from sparse_ai.core.logging import SparseLogger, LogCapture
 
 
 class Agent:
@@ -107,7 +107,7 @@ class Agent:
         self.graph = (graph or default_agent_graph()).compile(client=self.client, tools=self.tools, logger=self.logger)
 
 
-    async def run(self, query: str, stream=None, show_state= None ): 
+    async def run(self, query: str, stream=None, on_status=None ): 
         # show_state takes a Callable which returns State/Tool Call obj str concatinated with a Custom in-built CODE to pattern match in clinte and show custom UI.
         """
         Run the agent with a new user query.
@@ -145,9 +145,12 @@ class Agent:
             'total_tokens': 0
         }
 
-        self.logger.log_agent_start(query)
+        # Initialize log capture for this query
+        self.state.last_call_logs = LogCapture()
+
+        self.logger.log_agent_start(query, log_capture=self.state.last_call_logs)
         if self.tools:
-            self.logger.log_tools_available(self.tools)
+            self.logger.log_tools_available(self.tools, log_capture=self.state.last_call_logs)
 
         self.messages.append(Message.user(query))
 
@@ -157,9 +160,9 @@ class Agent:
 
         self.state.stream = stream      #* Added before GRAPH RUN()          # None if caller doesn't want streaming for this call
 
-        self.state.show_state = show_state #* This token str will be concatinated to ToolCall or other state which CLient can map and show custom UI.
+        self.state.on_status = on_status #* Emmits StatusEvent obj.
 
-        self.logger.log_state(self.state)
+        self.logger.log_state(self.state, log_capture=self.state.last_call_logs)
 
         final_state = await self.graph.run(self.state, self.query_stats)
 
@@ -179,7 +182,7 @@ class Agent:
         # Log query summary
         self.query_stats['final_response'] = final_state.last_response.text if final_state.last_response else 'No response'
         self.query_stats['state'] = final_state
-        self.logger.log_query_summary(query, self.query_stats, show_state=False)
+        self.logger.log_query_summary(query, self.query_stats, show_state=False, log_capture=self.state.last_call_logs)
 
         return final_state.last_response.text
 

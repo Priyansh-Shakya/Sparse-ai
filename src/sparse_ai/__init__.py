@@ -8,6 +8,7 @@ from sparse_ai.tools.tools import Tool
 from sparse_ai.messages.messages import Message
 from sparse_ai.client.client import Client
 from sparse_ai.state.state import State
+from sparse_ai.response.on_status import StatusEvent
 
 
-__all__ = ["Agent" , "Graph" , "Tool", "Message", "Client", "State"]
+__all__ = ["Agent" , "Graph" , "Tool", "Message", "Client", "State", "StatusEvent"]

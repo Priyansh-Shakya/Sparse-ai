@@ -38,10 +38,10 @@ class OpenAICompatibleAdapter(ClientMetadata):
         )
         self.logger = None
 
-    async def generate(self, messages, tools=None):
+    async def generate(self, messages, tools=None, log_capture=None):
         try:
             if self.logger:
-                self.logger.log_custom(f"[ADAPTER] Sending {len(messages)} messages to LLM")
+                self.logger.log_custom(f"[ADAPTER] Sending {len(messages)} messages to LLM", log_capture)
             serialized = ToolSerializer.openai_serialize(tools) if tools else None
 
             response = await self.client.chat.completions.create(
@@ -64,7 +64,8 @@ class OpenAICompatibleAdapter(ClientMetadata):
                     query,
                     response,
                     msg,
-                    repr(self)
+                    repr(self),
+                    log_capture
                 )
             return result
         except Exception:
@@ -72,9 +73,9 @@ class OpenAICompatibleAdapter(ClientMetadata):
             raise
 
     #? STREAM RESPONSE
-    async def stream(self, messages, tools=None):
+    async def stream(self, messages, tools=None, log_capture=None):
         if self.logger:
-            self.logger.log_custom(f"[ADAPTER] Starting stream with {len(messages)} messages")
+            self.logger.log_custom(f"[ADAPTER] Starting stream with {len(messages)} messages", log_capture)
         serialized = ToolSerializer.openai_serialize(tools) if tools else None
         resp_stream = await self.client.chat.completions.create(
             model=self.config.model, messages=messages, tools=serialized,
@@ -106,7 +107,7 @@ class OpenAICompatibleAdapter(ClientMetadata):
         final = LLMResponse(text="".join(text_parts) or None, tool_calls=tool_calls, raw=raw_last)
         self.record_call(response=final)
         if self.logger:
-            self.logger.log_custom(f"[ADAPTER] Stream completed - Total tokens: {final.raw.usage.total_tokens if hasattr(final.raw, 'usage') else 'N/A'}")
+            self.logger.log_custom(f"[ADAPTER] Stream completed - Total tokens: {final.raw.usage.total_tokens if hasattr(final.raw, 'usage') else 'N/A'}", log_capture)
         yield StreamChunk(done=True, final_response=final)
 
     # OpenAICompatibleAdapter
@@ -179,7 +180,7 @@ class GeminiAdapter(ClientMetadata):
         self.client = genai.Client(api_key=config.api_key)
         self.logger = None
 
-    async def generate(self, contents, tools=None):
+    async def generate(self, contents, tools=None, log_capture=None):
         config = None
         try:
             if tools:
@@ -188,7 +189,7 @@ class GeminiAdapter(ClientMetadata):
                     tools=[self.types.Tool(**tool_definitions)]
                 )
             if self.logger:
-                self.logger.log_custom(f"[ADAPTER] Sending {len(contents)} messages to Gemini")
+                self.logger.log_custom(f"[ADAPTER] Sending {len(contents)} messages to Gemini", log_capture)
             response = await self.client.aio.models.generate_content(
                 model=self.config.model,
                 contents=contents,
@@ -216,9 +217,9 @@ class GeminiAdapter(ClientMetadata):
         content = raw.candidates[0].content
         return {"role": content.role, "parts": [p.model_dump() for p in content.parts]}
 
-    async def stream(self, messages, tools=None):
+    async def stream(self, messages, tools=None, log_capture=None):
         if self.logger:
-            self.logger.log_custom(f"[ADAPTER] Starting Gemini stream with {len(messages)} messages")
+            self.logger.log_custom(f"[ADAPTER] Starting Gemini stream with {len(messages)} messages", log_capture)
 
         config = None
         if tools:
@@ -263,7 +264,7 @@ class GeminiAdapter(ClientMetadata):
         final = LLMResponse(text="".join(text_parts) or None, tool_calls=tool_calls, raw=raw_last)
         self.record_call(response=final)
         if self.logger:
-            self.logger.log_custom(f"[ADAPTER] Gemini stream completed")
+            self.logger.log_custom(f"[ADAPTER] Gemini stream completed", log_capture)
         yield StreamChunk(done=True, final_response=final)
     
 
@@ -282,10 +283,10 @@ class ClaudeAdapter(ClientMetadata):
         self.client = AsyncAnthropic(api_key=config.api_key)   # ✅ async client
         self.logger = None
 
-    async def generate(self, messages, tools=None):
+    async def generate(self, messages, tools=None, log_capture=None):
         try:
             if self.logger:
-                self.logger.log_custom(f"[ADAPTER] Sending {len(messages)} messages to Claude")
+                self.logger.log_custom(f"[ADAPTER] Sending {len(messages)} messages to Claude", log_capture)
             response = await self.client.messages.create(
                 model=self.config.model,
                 tools=ToolSerializer.claude_serialize(tools) if tools else None,
@@ -308,9 +309,9 @@ class ClaudeAdapter(ClientMetadata):
     def format_assistant_turn(self, raw) -> dict:
         return {"role": "assistant", "content": [b.model_dump() for b in raw.content]}
 
-    async def stream(self, messages, tools=None):
+    async def stream(self, messages, tools=None, log_capture=None):
         if self.logger:
-            self.logger.log_custom(f"[ADAPTER] Starting Claude stream with {len(messages)} messages")
+            self.logger.log_custom(f"[ADAPTER] Starting Claude stream with {len(messages)} messages", log_capture)
 
         text_parts = []
         tool_calls_acc = {}
@@ -353,7 +354,7 @@ class ClaudeAdapter(ClientMetadata):
         final = LLMResponse(text="".join(text_parts) if text_parts else None, tool_calls=tool_calls, raw=raw_last)
         self.record_call(response=final)
         if self.logger:
-            self.logger.log_custom(f"[ADAPTER] Claude stream completed")
+            self.logger.log_custom(f"[ADAPTER] Claude stream completed", log_capture)
         yield StreamChunk(done=True, final_response=final)
 
 

@@ -8,6 +8,7 @@ from typing import Callable, Optional
 
 from sparse_ai.graph.nodes.special_nodes import ApprovalConfig, approval_node
 
+from sparse_ai.response.on_status import StatusEvent
 from sparse_ai.state.state import State
 from sparse_ai.graph.nodes.nodes import Node
 from sparse_ai.tools.tool_result import ToolResult, ToolResultFormatter
@@ -432,6 +433,7 @@ class Graph:
                         state.messages
                     ),
                     tools=tools,
+                    log_capture=state.last_call_logs if hasattr(state, 'last_call_logs') else None
                 ):
 
                     if chunk.delta_text:
@@ -455,6 +457,7 @@ class Graph:
                         state.messages
                     ),
                     tools=tools,
+                    log_capture=state.last_call_logs if hasattr(state, 'last_call_logs') else None
                 )
 
             state.last_response = response
@@ -477,12 +480,12 @@ class Graph:
             state.tool_calls = response.tool_calls
 
             # Preserve message handling.
-            if response.tool_calls:
-
-                if state.show_state is not None:
-                    result = state.show_state(f"[STATUS]:{response.tool_calls}")
-                    
-                    if inspect.isawaitable(result): ### show_state callable will send this f-string to client.
+            if response.tool_calls and state.on_status:
+                for call in response.tool_calls:
+                    event = StatusEvent(kind="tool_call", tool_name=call.name,
+                                        detail=f"Running {call.name}...")
+                    result = state.on_status(event)
+                    if inspect.isawaitable(result):
                         await result
                     
 
@@ -543,7 +546,7 @@ class Graph:
                         is_error=True,
                     )
                     if self.logger:
-                        self.logger.log_tool_result(call.name, f"Error: no tool '{call.name}'", is_error=True)
+                        self.logger.log_tool_result(call.name, f"Error: no tool '{call.name}'", is_error=True, log_capture=state.last_call_logs if hasattr(state, 'last_call_logs') else None)
 
                 # ------------------------------------------------
                 # Execute tool
@@ -552,12 +555,12 @@ class Graph:
                 else:
 
                     if self.logger:
-                        self.logger.log_tool_call(call.name, call.arguments)
+                        self.logger.log_tool_call(call.name, call.arguments, log_capture=state.last_call_logs if hasattr(state, 'last_call_logs') else None)
                     try:
                         output = await tool.execute(**call.arguments)
                         result = ToolResult(call.id, call.name, output, is_error=False)
                         if self.logger:
-                            self.logger.log_tool_result(call.name, output, is_error=False)
+                            self.logger.log_tool_result(call.name, output, is_error=False, log_capture=state.last_call_logs if hasattr(state, 'last_call_logs') else None)
                         # Track statistics
                         if hasattr(state, 'query_stats'):
                             state.query_stats['tools_executed'] += 1
@@ -566,7 +569,7 @@ class Graph:
                     except Exception as e:
                         result = ToolResult(call.id, call.name, f"Error: {e}", is_error=True)
                         if self.logger:
-                            self.logger.log_tool_result(call.name, f"Error: {e}", is_error=True)
+                            self.logger.log_tool_result(call.name, f"Error: {e}", is_error=True, log_capture=state.last_call_logs if hasattr(state, 'last_call_logs') else None)
 
                 # Add provider-formatted tool result
                 # to conversation history.
@@ -622,7 +625,7 @@ class Graph:
             raise ValueError(f"No outgoing edge from node '{current}'.")
         next_node = await matching[0].resolve(state, self)
         if self.logger:
-            self.logger.log_graph_routing(current, next_node)
+            self.logger.log_graph_routing(current, next_node, log_capture=state.last_call_logs if hasattr(state, 'last_call_logs') else None)
         return next_node
 
     
@@ -650,7 +653,7 @@ class Graph:
             while current != END:
                 try:
                     if self.logger:
-                        self.logger.log_node_execution(current)
+                        self.logger.log_node_execution(current, log_capture=state.last_call_logs if hasattr(state, 'last_call_logs') else None)
                     state.current_node_name = current
                     result = self.nodes[current](state)
                     if inspect.isawaitable(result):

@@ -156,10 +156,13 @@ Approval / interruption:
         self.custom_fields = custom_fields or {} #! RECOMMENDED using 'PYDANTIC' typed 'DICT'
 
         #* Custom  
-        self.show_state = None  # Takes a callable.
+        self.on_status = None  # Takes a callable.
 
         #* Logger
         self.logger = None
+
+        #* Log capture - always captures logs regardless of logging flag
+        self.last_call_logs = None
 
 
  
